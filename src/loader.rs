@@ -2,10 +2,16 @@ use elf_rs::{ElfFile, SectionHeaderFlags, SectionType};
 
 use crate::{elf::Dynamic, mem::{VirtAddr, PhysAddr}};
 
+/**
+ * Abstraction of an allocated page by an MMU
+ */
 pub trait Page : Clone + Copy {
     fn inner(&self) -> &'static [u8; 4096];
 }
 
+/**
+ * Mapping permission. MMU may need to additionally add U bits
+ */
 #[derive(Clone, Copy)]
 pub struct Perm {
     pub r: bool,
@@ -13,35 +19,68 @@ pub struct Perm {
     pub x: bool,
 }
 
+/**
+ * Abstraction of an MMU instance
+ */
 pub trait MMU {
+    /// The type of allocated page
     type AllocatedPage : Page;
+
+    /// Allocate an page
     fn alloc(&mut self) -> Self::AllocatedPage;
-    fn map(&mut self, page: Self::AllocatedPage, vpn: usize, perm: Perm);
+
+    /// Map an alloctaed page
+    fn map(&mut self, page: Self::AllocatedPage, vpn: usize, perm: Perm) {
+        self.map_existing(PhysAddr(page.inner() as *const u8 as usize).floor().0, vpn, perm)
+    }
+
+    /// Map an address not allocated, but pre-existing
     fn map_existing(&mut self, ppn: usize, vpn: usize, perm: Perm);
-    fn translate(&self, paddr: usize) -> Option<usize>;
+
+    /// Translate an vaddr into paddr
+    fn translate(&self, vaddr: usize) -> Option<usize>;
 }
+
+/**
+ * Configuration of VDSO linking
+ */
 
 #[derive(PartialEq, Eq)]
-struct LDSOConfig<F> {
-    start: usize,
-    end: usize,
-    target: usize,
-    lookup: F,
+pub struct VDSOConfig<F> {
+    /// The start of VDSO range in physical address
+    pub start: usize,
+
+    /// The end of VDSO range in physical address
+    pub end: usize,
+
+    /// The start of VDSO in process address space
+    pub target: usize,
+
+    /// The symbol lookup table
+    pub lookup: F,
 }
 
+/**
+ * Configuration of stack mapping
+ */
 pub struct StackConfig {
+    /// The start of stack in process address space
     start: usize,
+
+    /// The end of stack in process address space
     end: usize
 }
 
 pub struct Loader {
-    entry: usize,
+    pub entry: usize,
 }
 
 impl Loader {
-    fn load<M: MMU, F: for<'r> FnMut(&'r [u8]) -> Option<usize>>(buf: &[u8], mmu: &mut M, mut ldso: Option<LDSOConfig<F>>, stack: StackConfig) -> Loader {
+    /**
+     * Load an elf providing an MMU and various configurations.
+     */
+    pub fn load<M: MMU, F: for<'r> FnMut(&'r [u8]) -> Option<usize>>(buf: &[u8], mmu: &mut M, ldso: Option<VDSOConfig<F>>, stack: StackConfig) -> Loader {
         let parsed = elf_rs::Elf64::from_bytes(buf).unwrap();
-        let header = parsed.elf_header();
 
         let mut dynamic = None;
 
@@ -140,12 +179,8 @@ impl Loader {
             let page = mmu.alloc();
             mmu.map(page, stack_vpn, stack_perm);
         }
-        // let stack_area = MapArea::frames(stack_start .. stack_end, MapPermission::U | MapPermission::W | MapPermission::R);
-        // mset.push(stack_area, None);
 
         let entry = parsed.entry_point() as usize;
-        // mprintln!("Entry: {:#x}", entry);
-        // let tf = TrapFrame::with_process(true, entry, USER_STACK_TOP);
 
         Loader {
             entry,
