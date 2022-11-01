@@ -4,7 +4,7 @@ This crate supports ELF loading and symbol preloading. It can be used directly i
 
 # Usage
 
-This crate also can help with loading elf. Checkout src/elf.rs
+This crate also can help with loading elf. Checkout `src/loader.rs`.
 
 `no_std` environments are supported, but you need to specify an global alloc.
 
@@ -27,3 +27,5 @@ pub extern "C" fn kernel_provided_symbol() -> usize {
   42
 }
 ```
+
+Then you need to pass in a LDSO config into `crate::loader::Loader::load`. In that config, you need to specify a lookup function to facilitate symbol lookup.

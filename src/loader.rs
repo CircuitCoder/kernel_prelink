@@ -22,10 +22,11 @@ pub trait MMU {
 }
 
 #[derive(PartialEq, Eq)]
-struct LDSOPageRange {
+struct LDSOConfig<F> {
     start: usize,
     end: usize,
     target: usize,
+    lookup: F,
 }
 
 pub struct StackConfig {
@@ -38,10 +39,7 @@ pub struct Loader {
 }
 
 impl Loader {
-    fn load<M: MMU, const ldso: Option<LDSOPageRange>, F>(buf: &[u8], mmu: &mut M, mut lookup: F, stack: StackConfig) -> Loader
-    where
-        F: for<'r> FnMut(&'r [u8]) -> Option<usize>
-    {
+    fn load<M: MMU, F: for<'r> FnMut(&'r [u8]) -> Option<usize>>(buf: &[u8], mmu: &mut M, mut ldso: Option<LDSOConfig<F>>, stack: StackConfig) -> Loader {
         let parsed = elf_rs::Elf64::from_bytes(buf).unwrap();
         let header = parsed.elf_header();
 
@@ -86,7 +84,7 @@ impl Loader {
         }
 
         // Map VDSO text
-        if let Some(config) = ldso {
+        if let Some(mut config) = ldso {
             let text_vdso_start_ppn = PhysAddr(config.start).floor().0;
             let text_vdso_end_ppn = PhysAddr(config.end).ceil().0;
             let text_vdso_start_vpn = VirtAddr(config.target).floor().0;
@@ -109,7 +107,7 @@ impl Loader {
                         crate::elf::RelTable::RELA(tbl) => {
                             for ent in *tbl {
                                 let (sym, name) = dynamic.resolve_sym(ent.info >> 32);
-                                if let Some(at) = lookup(name) {
+                                if let Some(at) = (config.lookup)(name) {
                                     // Found, fill in GOT
                                     let target_offset = at - config.start as usize;
                                     let target_vaddr = config.target + target_offset;
